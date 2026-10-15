@@ -1,6 +1,6 @@
 /* RCP's-GAMES Tavla — çevrimdışı önbellek
  * Güncelleme yaparken: aşağıdaki V'yi bir artır VE index.html'deki ?v= numaralarını aynı sayıya getir. */
-const V = '7';
+const V = '8';
 const CACHE = 'rcp-tavla-v' + V;
 const FILES = ['firebase-config.js', 'engine.js', 'sound.js', 'net.js', 'chat.js', 'fal.js', 'bot.js', 'music.js', 'voice.js', 'scene3d.js', 'cafe.js', 'app.js', 'style.css'];
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'].concat(FILES.map(f => './' + f + '?v=' + V));

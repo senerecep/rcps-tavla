@@ -65,7 +65,7 @@
     return sc;
   }
 
-  /** Bu tur oynanacak hamleleri sırayla döndürür. level: 'kolay' | 'usta' */
+  /** Bu tur oynanacak hamleleri sırayla döndürür. level: 'kolay' | 'orta' | 'usta' */
   function plan(s, level) {
     const seqs = sequences(s);
     if (!seqs.length) return [];
@@ -74,7 +74,8 @@
     let best = null, bestSc = -Infinity;
     seqs.forEach(x => {
       let sc = evaluate(x.st, p);
-      if (level === 'kolay') sc += (Math.random() - .5) * 14;
+      if (level === 'kolay') sc += (Math.random() - .5) * 22;
+      else if (level === 'orta') sc += (Math.random() - .5) * 9;
       if (sc > bestSc) { bestSc = sc; best = x; }
     });
     return best.path;

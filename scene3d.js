@@ -693,7 +693,7 @@
   }
   function saucer(r, gold) {
     const g = new T.Group();
-    const s = new T.Mesh(lathe([[0, 0], [r * .75, 0], [r * .95, .05], [r, .09]]), MAT.porcelain); g.add(s);
+    const s = new T.Mesh(lathe([[0, 0], [r * .75, 0], [r * .95, .05], [r, .09]]), MAT.porcelain); s.position.y = .006; g.add(s);
     if (gold) { const t = new T.Mesh(new T.TorusGeometry(r * .985, .012, 6, 48), MAT.gold); t.rotation.x = Math.PI / 2; t.position.y = .088; g.add(t); }
     return g;
   }
@@ -706,43 +706,133 @@
       for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(90,45,10,${(Math.random() * .25).toFixed(2)})`; g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2); }
     });
   }
+  /* ---------- Isırık geometrisi ----------
+   * Yiyeceğin üstten görünüşü bir çokgen. Her ısırık, kenarı dişli bir daireyi bu çokgenden çıkarır.
+   * Kalan şekil kalınlaştırılır; ısırılan kenarlar ekmek içi rengiyle boyanır. */
+  function inPoly(p, poly) {
+    let c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+    return c;
+  }
+  function densify(poly, step) {
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(d / step));
+      for (let k = 0; k < n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]);
+    }
+    return out;
+  }
+  const toothR = (bt, ang) => bt.r * (1 + .07 * Math.cos(ang * bt.teeth));
+  const inBite = (p, bt) => { const dx = p[0] - bt.x, dy = p[1] - bt.y; return Math.hypot(dx, dy) < toothR(bt, Math.atan2(dy, dx)); };
+  /** Çokgenden bir ısırığı çıkarır (tek bölgeli kesişim için) */
+  function biteOut(poly, bt) {
+    const n = poly.length, ins = poly.map(p => inBite(p, bt));
+    if (ins.every(Boolean)) return null;
+    if (!ins.some(Boolean)) return poly;
+    let s = ins.findIndex((v, i) => !v && ins[(i + 1) % n]);
+    const out = [];
+    let i = s;
+    for (let c = 0; c < n; c++) {
+      const a = poly[i], an = ins[i], b = poly[(i + 1) % n], bn = ins[(i + 1) % n];
+      if (!an) out.push(a);
+      if (!an && bn) {
+        const a0 = Math.atan2(a[1] - bt.y, a[0] - bt.x);
+        let j = (i + 1) % n; while (ins[j]) j = (j + 1) % n;
+        const pj = poly[j], a1 = Math.atan2(pj[1] - bt.y, pj[0] - bt.x);
+        let d1 = a1 - a0; while (d1 > Math.PI) d1 -= 2 * Math.PI; while (d1 < -Math.PI) d1 += 2 * Math.PI;
+        const mid = a0 + d1 / 2, mp = [bt.x + Math.cos(mid) * bt.r * .98, bt.y + Math.sin(mid) * bt.r * .98];
+        const d = inPoly(mp, poly) ? d1 : (d1 > 0 ? d1 - 2 * Math.PI : d1 + 2 * Math.PI);
+        const steps = Math.max(10, Math.ceil(Math.abs(d) * 18));
+        for (let k = 0; k <= steps; k++) { const ang = a0 + d * k / steps, rr = toothR(bt, ang); out.push([bt.x + Math.cos(ang) * rr, bt.y + Math.sin(ang) * rr]); }
+        const skip = (j - i - 1 + n) % n; c += skip; i = j; continue;
+      }
+      i = (i + 1) % n;
+    }
+    return out.length > 2 ? out : null;
+  }
+  /** Isırılmış katman: üst/alt yüz dokulu, kenarlar kabuk rengi, ısırık kenarları iç rengi */
+  function biteLayer(poly, bites, h, capMat, crust, inner, bevel) {
+    let p = poly;
+    for (const bt of bites) { if (!p) break; p = biteOut(p, bt); }
+    if (!p) return null;
+    const sh = new T.Shape(); sh.moveTo(p[0][0], p[0][1]); for (let k = 1; k < p.length; k++) sh.lineTo(p[k][0], p[k][1]); sh.closePath();
+    const bv = bevel || .012;
+    const geo = new T.ExtrudeGeometry(sh, { depth: h, bevelEnabled: true, bevelThickness: bv, bevelSize: bv, bevelSegments: 2, curveSegments: 2 });
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), cC = new T.Color(crust), cI = new T.Color(inner);
+    for (let k = 0; k < pos.count; k++) {
+      const x = pos.getX(k), y = -pos.getZ(k);
+      const bitten = bites.some(bt => { const d = Math.hypot(x - bt.x, y - bt.y); return d < bt.r * 1.12 + bv; });
+      const c = bitten ? cI : cC; col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+    }
+    geo.setAttribute('color', new T.BufferAttribute(col, 3));
+    const side = new T.MeshStandardMaterial({ vertexColors: true, roughness: .85 });
+    const m = new T.Mesh(geo, [capMat, side]); m.castShadow = true;
+    return m;
+  }
+  const capsule = (L, w, seg) => {
+    const pts = [], r = w / 2, hx = L / 2 - r;
+    for (let k = 0; k <= seg; k++) { const a = -Math.PI / 2 + Math.PI * k / seg; pts.push([hx + Math.cos(a) * r, Math.sin(a) * r]); }
+    for (let k = 0; k <= seg; k++) { const a = Math.PI / 2 + Math.PI * k / seg; pts.push([-hx + Math.cos(a) * r, Math.sin(a) * r]); }
+    return pts;
+  };
+
   function buildFood(type, D) {
     const g = new T.Group(), body = new T.Group(); g.add(body);
-    const plate = new T.Mesh(lathe([[0, 0], [.6, 0], [.82, .04], [.92, .09]]), MAT.porcelain); g.add(plate);
+    const plate = new T.Mesh(lathe([[0, 0], [.6, 0], [.82, .04], [.92, .09]]), MAT.porcelain); plate.position.y = .006; g.add(plate);
     const rim = new T.Mesh(new T.TorusGeometry(.905, .012, 6, 48), MAT.gold); rim.rotation.x = Math.PI / 2; rim.position.y = .088; g.add(rim);
     body.position.y = .035;
     const o = { g, body, type, level: 1, hot: true, D, bubbles: [], cup: body, cupH: .2 };
+    const holder = new T.Group(); body.add(holder);
+    const clear = () => { holder.children.slice().forEach(c => { holder.remove(c); c.traverse(x => { if (x.geometry) x.geometry.dispose(); }); }); };
     if (D.food === 'tost') {
       const bread = new T.MeshStandardMaterial({ map: toastTex(), roughness: .85 });
-      const crust = new T.MeshStandardMaterial({ color: 0x8e5220, roughness: .9 });
       const cheese = new T.MeshStandardMaterial({ color: 0xf2c14e, roughness: .45 });
-      const q = .42, tris = [[[q, q], [q, -q]], [[q, -q], [-q, -q]], [[-q, -q], [-q, q]], [[-q, q], [q, q]]];
-      const pieces = [];
-      tris.forEach(([a, b]) => {
-        const sh = new T.Shape(); sh.moveTo(0, 0); sh.lineTo(a[0], a[1]); sh.lineTo(b[0], b[1]); sh.lineTo(0, 0);
-        const mk = (h, m) => { const geo = new T.ExtrudeGeometry(sh, { depth: h, bevelEnabled: true, bevelThickness: .012, bevelSize: .014, bevelSegments: 2 }); geo.rotateX(-Math.PI / 2); const me = new T.Mesh(geo, [m, crust]); me.castShadow = true; return me; };
-        const pc = new T.Group(), b1 = mk(.07, bread), ch = mk(.022, cheese), b2 = mk(.07, bread);
-        ch.position.y = .08; ch.scale.set(1.04, 1, 1.04); b2.position.y = .11;
-        pc.add(b1, ch, b2);
-        pc.position.set((a[0] + b[0]) * .06, 0, -(a[1] + b[1]) * .06);
-        body.add(pc); pieces.push(pc);
-      });
-      o.setLevel = l => { o.level = l; const n = Math.ceil(l * 4 - .001); pieces.forEach((p, i) => { p.visible = i < n; }); };
+      const q = .42;
+      // köşegenden kesilmiş iki üçgen; ısırıklar köşelerden başlar
+      const halves = [
+        { poly: densify([[-q, q], [q, q], [q, -q]], .03), off: [.03, .03], bites: [{ x: q, y: q, r: .27, teeth: 9 }, { x: q * .35, y: q * .35, r: .42, teeth: 11 }] },
+        { poly: densify([[-q, q], [q, -q], [-q, -q]], .03), off: [-.03, -.03], bites: [{ x: -q, y: -q, r: .27, teeth: 9 }, { x: -q * .35, y: -q * .35, r: .42, teeth: 11 }] }
+      ];
+      // 4 ısırık: A'nın köşesi, A biter, B'nin köşesi, B biter
+      const plan = [[0, 0], [0, 1], [1, 0], [1, 1]];
+      o.setLevel = l => {
+        o.level = l; clear();
+        const eaten = Math.round((1 - clamp(l, 0, 1)) * 4);
+        halves.forEach((hf, hi) => {
+          const bs = plan.slice(0, eaten).filter(([h]) => h === hi).map(([, b]) => hf.bites[b]);
+          if (bs.length >= 2) return;
+          const grp = new T.Group(); grp.position.set(hf.off[0], 0, -hf.off[1]);
+          const b1 = biteLayer(hf.poly, bs, .07, bread, 0x9a5a24, 0xf3dfb4);
+          const ch = biteLayer(hf.poly, bs.map(b => Object.assign({}, b, { r: b.r * .96 })), .022, cheese, 0xe8b23a, 0xf2c14e, .006);
+          const b2 = biteLayer(hf.poly, bs, .07, bread, 0x9a5a24, 0xf3dfb4);
+          if (b1) grp.add(b1); if (ch) { ch.position.y = .082; ch.scale.set(1.03, 1, 1.03); grp.add(ch); } if (b2) { b2.position.y = .112; grp.add(b2); }
+          holder.add(grp);
+        });
+      };
     } else {
       const bun = new T.MeshStandardMaterial({ color: 0xd49a55, roughness: .8 });
       const saus = new T.MeshPhysicalMaterial({ color: 0x8a3518, roughness: .4, clearcoat: .5 });
-      const grp = new T.Group(); grp.position.x = -.62; body.add(grp);
-      const inner = new T.Group(); inner.position.x = .62; grp.add(inner);
-      [-.085, .085].forEach(z => { const b = new T.Mesh(new T.SphereGeometry(1, 24, 12), bun); b.scale.set(.62, .15, .13); b.position.set(0, .14, z); b.castShadow = true; inner.add(b); });
-      const s2 = new T.Mesh(new T.SphereGeometry(1, 24, 12), saus); s2.scale.set(.7, .085, .085); s2.position.y = .2; inner.add(s2);
-      const zig = (col, off) => {
-        const pts = []; for (let i = 0; i <= 14; i++) pts.push(new T.Vector3(-.55 + i * .078, .29, (i % 2 ? .05 : -.05) + off));
-        const m = new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts), 60, .014, 6), new T.MeshStandardMaterial({ color: col, roughness: .35 }));
-        inner.add(m);
+      const bunPoly = densify(capsule(1.24, .34, 14), .03), sausPoly = densify(capsule(1.36, .15, 10), .02);
+      const bites = [{ x: .74, y: .01, r: .24, teeth: 10 }, { x: .43, y: -.01, r: .25, teeth: 10 }, { x: .1, y: .01, r: .25, teeth: 10 }];
+      o.setLevel = l => {
+        o.level = l; clear();
+        const eaten = Math.round((1 - clamp(l, 0, 1)) * 4);
+        if (eaten >= 4) return;
+        const bs = bites.slice(0, eaten);
+        const b = biteLayer(bunPoly, bs, .13, bun, 0xb87a3a, 0xf4e2bd, .06); if (b) { b.position.y = .05; holder.add(b); }
+        const s = biteLayer(sausPoly, bs, .05, saus, 0x7a2e14, 0xd98a6a, .045); if (s) { s.position.y = .2; holder.add(s); }
+        const cut = bs.length ? bs[bs.length - 1].x - bs[bs.length - 1].r : 9;
+        [[0xc0180e, 0], [0xe8b520, .015]].forEach(([col, off]) => {
+          const pts = []; for (let i = 0; i <= 14; i++) { const x = -.55 + i * .078; if (x < cut - .02) pts.push(new T.Vector3(x, .3, -((i % 2 ? .05 : -.05) + off))); }
+          if (pts.length > 2) holder.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts), 40, .014, 6), new T.MeshStandardMaterial({ color: col, roughness: .35 })));
+        });
       };
-      zig(0xc0180e, 0); zig(0xe8b520, .015);
-      o.setLevel = l => { o.level = l; grp.visible = l > .01; grp.scale.x = Math.max(.001, l); };
     }
+    o.setLevel(1);
     o.topLocal = new T.Vector3(0, .45, 0);
     return o;
   }

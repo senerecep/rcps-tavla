@@ -109,6 +109,7 @@
     const title = Tavla.diceName(a, b) + (lv >= 2 ? '!' : '') + (lv >= 3 ? '!!' : '');
     banner(title, sub, lv, lv >= 2 ? 2100 : 1500, [a, b]);
     if (lv >= 1) Sfx.cheer(lv);
+    if (isBot() && ns.diceP !== BOT && a === b) botSay('youDouble', .6);
     if (lv >= 2) { Scene.shake(lv - .5); confetti(lv >= 3 ? 140 : 50, lv >= 3); }
     if (lv >= 3) { document.body.classList.add('flash'); setTimeout(() => document.body.classList.remove('flash'), 700); Scene.lean(new THREE.Vector3(sideOf(ns.diceP) === 'R' ? 3.5 : -3.5, 1, 0), .35, 1.4); }
     await sleep(lv >= 2 ? 650 : 280);
@@ -185,7 +186,7 @@
     const rb = $('#rollBtn');
     const canRoll = !pending && myTurn() && S.phase === 'roll' && !waitingOpp() && !entryClosed(S, S.turn) && !Scene.isFolded();
     rb.hidden = !canRoll;
-    if (canRoll) rb.classList.toggle('opp', sideOf(S.turn) === 'L');
+    if (canRoll) { rb.classList.toggle('opp', sideOf(S.turn) === 'L'); rb.querySelector('span:last-child').textContent = Shake.on && isTouch ? 'Salla / dokun' : 'Zar at'; }
     const ub = $('#undoBtn');
     const canUndo = !pending && G.undo.length > 0 && myTurn() && S.phase === 'move' && !Scene.isFolded();
     ub.hidden = !canUndo;
@@ -274,10 +275,18 @@
   /* ---------- Eylemler ---------- */
   function commit(ns) { if (G.mode === 'online') Net.setState(ns); queue(() => transition(ns)); }
 
-  function doRoll(force) {
+  /** Sallama gücü e (0-1): hafif sallama küçük sayılara, sert sallama büyük sayılara hafifçe yatkın. e yoksa tamamen eşit. */
+  function rollBiased(e) {
+    if (e == null) return roll1();
+    const tilt = (e - .5) * .5, w = [1, 2, 3, 4, 5, 6].map(k => 1 + tilt * (k - 3.5) / 2.5), sum = w.reduce((x, y) => x + y, 0);
+    let r = rand(1e6) / 1e6 * sum;
+    for (let k = 0; k < 6; k++) { r -= w[k]; if (r <= 0) return k + 1; }
+    return 6;
+  }
+  function doRoll(force, shakeE) {
     const S = G.S;
     if (pending || !S || S.phase !== 'roll' || (!myTurn() && force !== true) || waitingOpp()) return;
-    const a = roll1(), b = roll1();
+    const a = rollBiased(shakeE), b = rollBiased(shakeE);
     const ns = clone(S); ns.v++;
     ns.dice = [a, b]; ns.diceP = S.turn; ns.rollV = ns.v;
     ns.left = a === b ? [a, a, a, a] : [a, b];
@@ -389,7 +398,7 @@
       G.S = ns; Scene.clearOpening(); render();
       if (myTurn()) btoast(G.mode === 'local' ? `${nameOf(ns.turn)}, zar at` : 'Sen başlıyorsun, zar at', 1800);
       if (isBot() && ns.turn === BOT) botSay('start');
-    } else { G.S = ns; render(); }
+    } else { G.S = ns; render(); if (L.type === 'new' && L.starter != null) banner(G.mode !== 'local' && L.starter === G.me ? 'Sen başlıyorsun' : `${nameOf(L.starter)} başlıyor`, 'Önceki eli kazandı', 1, 1800); }
     if (ns.phase === 'roll' && prev && prev.turn !== ns.turn && myTurn() && L.type !== 'start') {
       G.undo = [];
       Sfx.tick(); if (G.mode !== 'local' && !entryClosed(ns, ns.turn)) btoast('Sıra sende, zar at', 1500);
@@ -420,36 +429,113 @@
       clearTimeout(closedT); closedT = setTimeout(() => doPass('closed'), 1200);
     }
     if (S.phase === 'opening') handleOpening();
-    if (isBot()) botStep();
+    if (isBot()) { botStep(); clearTimeout(kasparT); if (S.turn !== BOT && (S.phase === 'roll' || S.phase === 'move') && !S.done) kasparT = setTimeout(() => botSay('kaspar'), 25000); }
     if (G.autoRoll) autoRollStep();
     refreshInteract();
   }
 
+  /* ---------- Telefonu sallayarak zar ---------- */
+  const Shake = { on: localStorage.getItem('rcp_shake') !== '0', energy: 0, active: false, last: 0, snd: 0, prev: null };
+  function shakeReady() { const S = G.S; return !!S && S.phase === 'roll' && myTurn() && !pending && !waitingOpp() && !$('#rollBtn').hidden; }
+  function onMotion(e) {
+    if (!Shake.on || !G.mode) return;
+    const a = e.accelerationIncludingGravity || e.acceleration; if (!a) return;
+    const v = [a.x || 0, a.y || 0, a.z || 0];
+    if (!Shake.prev) { Shake.prev = v; return; }
+    const d = Math.hypot(v[0] - Shake.prev[0], v[1] - Shake.prev[1], v[2] - Shake.prev[2]); Shake.prev = v;
+    if (!shakeReady()) { Shake.energy = 0; Shake.active = false; return; }
+    const now = performance.now();
+    if (d > 9) {
+      Shake.active = true; Shake.last = now; Shake.energy += d;
+      const k = Math.min(1, (d - 9) / 25);
+      if (now - Shake.snd > 75 - k * 35) { Shake.snd = now; Sfx.cupShake(k); }
+      clearTimeout(Shake.t); Shake.t = setTimeout(shakeDone, 400);
+    }
+  }
+  /** Sallama bitti: toplanan enerjiye göre zar atılır */
+  function shakeDone() {
+    if (!Shake.active) return;
+    const en = Math.min(1, Shake.energy / 1500); Shake.active = false; Shake.energy = 0;
+    if (en > .06 && shakeReady()) doRoll(false, en);
+  }
+  async function askMotion() {
+    try { if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') return (await DeviceMotionEvent.requestPermission()) === 'granted'; } catch (e) { return false; }
+    return true;
+  }
+  window.addEventListener('devicemotion', onMotion);
+  const isTouch = matchMedia('(pointer: coarse)').matches;
+
   /* ---------- Bilgisayar rakip ---------- */
   let botT = null;
+  const HITAP = ['dostum', 'kanka', 'arkadaşım', 'birader', 'hocam', 'reis', 'kardeşim', 'usta', 'aslanım'];
   const BOT_SOZ = {
-    start: ['Hadi bakalım, göreyim seni.', 'Çayını iç, sonra ağlarsın 😄'],
-    double: ['Hayde oynaaağ 💃🏻', 'Balını yesinler zarın 😏', 'Okey mi oynuyoruz, çift çift geliyor!'],
-    bad: ['Şansımı sikeyim.', 'Zar bozuk bu!', 'Aq, bu ne zar.'],
-    hitYou: ['Kaspar olduk birader! 😄', 'Kırdım seni, çayını iç sakinleş.', 'Balını yesinler, otur bakalım kenara.'],
-    gotHit: ['Hassiktir!', 'Kaspar olduk birader!', 'Ooo, ustaymışsın.'],
-    winMars: ['Haydi yavrum marsa! Okullar tatil 🎒', 'Mars! Okullar tatil 😎'],
-    win: ['Okullar tatil 🎒', 'Tavla koltuğunun altında, kardeşim.'],
-    lose: ['Aq, iyi oynadın. Bir el daha?', 'Şansımı sikeyim, rövanş!'],
-    blocked: ['Kapıları kapattın ha, aferin.', 'Aq, kilit vurmuş adam.'],
-    marsSoon: ['Haydi yavrum marsa!', 'Mars kokusu alıyorum…'],
-    voice: ['Sesin bayağı gür çıkıyor yeğenim 😄', 'Ne dedin duyamadım, zarlar çok gürültülü.', 'Hadi oyna, radyo programı mı yapıyoruz?'],
-    cold: ['Soğuk su mu? Asıl sen iç onu 😄', 'Hassiktir, buz gibi!', 'Sağ ol yeğenim, tam da terlemiştim.']
+    start: ['Hadi bakalım {a}, göreyim seni.', 'Çayını iç {a}, sonra ağlarsın 😄', 'Zarlar ısındı mı {a}?', 'Bugün masada tek hakim var {a}.', 'Hoş geldin {a}, kolay gelsin… sana lazım olacak 😄'],
+    double: ['Hayde oynaaağ 💃🏻', 'Çift geldi {a}, kusura bakma 😏', 'Zarlar beni seviyor {a}!', 'Bu zarı çerçeveletip asacağım.', 'Balını yesinler, ne zar ama!'],
+    youDouble: ['Şansına bak {a}!', 'Hassiktir, yine mi çift?', 'Zar seni kolluyor {a}.', 'O zarı nereden buldun {a}?', 'Tamam {a}, bu seferlik geçerli 😄'],
+    bad: ['Şansımı sikeyim.', 'Zar bozuk bu {a}!', 'Aq, bu ne zar.', 'Bu zarla ancak çay söylerim.', 'Zarı kim yaptıysa elleri dert görmesin(!)'],
+    hitYou: ['Kırdım seni {a}, otur kenara 😄', 'Pardon {a}, yolumdaydın.', 'Kapıdan dön bakalım {a}.', 'Kırık taş, kırık kalp {a} 😎', 'Taşını aldım {a}, makbuz ister misin?'],
+    gotHit: ['Hassiktir!', 'Ooo {a}, ustaymışsın.', 'Aq, tam da oraya mı?', 'Tamam {a}, intikam soğuk yenir.', 'Bunu not ettim {a} 😤'],
+    winMars: ['Haydi yavrum marsa! Okullar tatil 🎒', 'Mars {a}! Okullar tatil 😎', 'Çift puan cebimde {a}, eyvallah.'],
+    win: ['Okullar tatil 🎒', 'Tavla koltuğunun altında {a}.', 'Bu el benim {a}, sıradaki gelsin.', 'Eyvallah {a}, iyi mücadeleydi.'],
+    lose: ['Aq, iyi oynadın {a}. Bir el daha?', 'Şansımı sikeyim, rövanş!', 'Helal olsun {a}, bu sefer senin.', 'Tamam {a}, sıradaki elde görüşürüz.'],
+    blocked: ['Kapıları kapattın ha {a}, aferin.', 'Aq, kilit vurmuş adam.', 'Kapı duvar {a}, açsana biraz.'],
+    kaspar: ['Kaspar olduk {a}! Oyna artık.', 'Kaspar ettin beni {a}, çay soğudu.', 'Hadi {a}, zar seni bekliyor.', 'Uyudun mu {a}? Kaspar olduk burada.', 'Düşünürken saç beyazladı {a} 😄'],
+    voice: ['Sesin bayağı gür çıkıyor {a} 😄', 'Ne dedin duyamadım {a}, zarlar çok gürültülü.', 'Radyo programı mı yapıyoruz {a}? Oyna hadi.', 'Güzel ses {a}, türkü de söyle bari.'],
+    cold: ['Soğuk su mu? Asıl sen iç onu {a} 😄', 'Hassiktir, buz gibi!', 'Sağ ol {a}, tam da terlemiştim.', 'Bu suyu sana iade ediyorum {a} 🧊']
   };
-  let lastSay = 0;
+  /** Hazır mesajlara ve yazılanlara bilgisayarın cevapları */
+  const BOT_CEVAP = {
+    'hadi oyna!': ['Oynuyorum {a}, sakin.', 'Acele işe şeytan karışır {a}.', 'Sen bana değil zara söyle onu 😄', 'Tamam tamam, geliyorum.'],
+    'hassiktir': ['Ne oldu {a}? 😄', 'Kontrolü kaybetme {a}.', 'Sakin, daha maç bitmedi.', 'Ooo, sinirler gerildi.'],
+    'aq': ['Ayıp ayıp {a} 😄', 'Kızma {a}, oyun bu.', 'Hehe, canın mı sıkıldı?', 'Bir çay iç, geçer {a}.'],
+    'şansımı sikeyim': ['Şans değil {a}, yetenek bu 😎', 'Zarı suçlama {a}.', 'Bir dahakine belki.', 'Herkesin zarı bir gün döner {a}.'],
+    'balını yesinler': ['Sağ ol {a} 😄', 'Yesinler yesinler.', 'Ballı zar bunlar {a}.', 'Eyvallah {a}!'],
+    'haydi yavrum marsa': ['Rüyanda {a} 😄', 'O mars sana dönecek, görürsün.', 'Önce bir taş topla bakalım.', 'Az bekle, kim kime mars oluyor göreceğiz.'],
+    'okullar tatil': ['Daha karne dağıtılmadı {a}!', 'Tatil sana {a}, ben mesaideyim.', 'Erken sevinme {a}.', 'Okul bitmez {a}, yaz okulu var 😄'],
+    'hayde oynaaağ 💃🏻': ['Oynaaa 💃🏻💃🏻', 'Halay başı benim {a}!', 'Ooo, keyifler yerinde.', 'Mendil de getireyim mi {a}? 😄'],
+    'kaspar olduk birader!': ['Düşünüyorum {a}, beyin yanıyor 😄', 'Tamam tamam, oynuyorum.', 'Sabır {a}, sabır.', 'Usta işi düşünmek ister {a}.'],
+    'zar bozuk bu!': ['Zar aynı zar {a} 😄', 'Zarı değiştirelim mi {a}?', 'Ustalar zara bakmaz.', 'Zar bozuk değil, şansın bozuk {a}.'],
+    'kırdım seni 😎': ['Daha bitmedi {a}.', 'Görürsün sen 😤', 'Kırık taş geri döner {a}.', 'Bir taştan ne olur {a}.'],
+    'çaylar benden ☕': ['Eyvallah {a} ☕', 'Bir de tost söyle bari.', 'Sen çok yaşa {a}.', 'Demli olsun {a}.'],
+    'mars olacaksın!': ['Hayatta olmam {a}.', 'O laf sana döner {a} 😄', 'Görürüz bakalım.', 'Mars kelimesini ağzına alma {a}.'],
+    'bir el daha?': ['Her zaman {a}!', 'Otur, bir el daha.', 'Rövanş hakkın var {a}.', 'Masa senin {a}.'],
+    'iyi oyundu 🤝': ['Senin de eline sağlık {a} 🤝', 'Eyvallah, iyiydin.', 'Bir dahakine yine bekliyorum {a}.'],
+    '😂': ['😂😂', 'Gül gül {a}, sonra ağlarsın.', 'Neye güldün {a}?'], '🔥': ['🔥 Masa yanıyor {a}!', 'Sıcak sıcak oynuyoruz.'],
+    '👏': ['👏 Eyvallah {a}.', 'Alkışı hak ettim 😎'], '😎': ['Gözlükleri ben de taktım 😎', 'Havalısın {a}.'],
+    '😤': ['Sinirlenme {a} 😄', 'Nefes al, ver.'], '🙏': ['Dua etme {a}, oyna 🙏', 'Allah ne verdiyse.'],
+    '😱': ['Korkma {a}, bir şey olmaz.', 'Ne gördün?'], '💀': ['Daha ölmedin {a} 💀', 'Yaşıyor musun {a}?'],
+    '🍀': ['Şans bende {a} 🍀', 'Yoncaları ben topladım.'], '🎲': ['Zar at {a}, zar 🎲', 'Zarlar hazır.'],
+    '☕': ['Bir çay da bana {a} ☕', 'Çay olmadan olmaz.'], '🤝': ['🤝 Eyvallah {a}.', 'Centilmenlik güzel.']
+  };
+  const BOT_SERBEST = [
+    [/selam|merhaba|naber|slm/i, ['Selam {a}, hoş geldin!', 'Aleyküm selam {a}.', 'İyidir {a}, senden naber?']],
+    [/nasılsın|nasilsin|iyi misin/i, ['İyiyim {a}, sen nasılsın?', 'Zarlar iyi geldikçe iyiyim 😄']],
+    [/çay|cay|kahve|tost|sosisli/i, ['Garson! İki çay {a} için ☕', 'Bana da söyle {a}.', 'Kahvehanede çaysız olmaz {a}.']],
+    [/mars/i, ['Mars lafı geçince tüylerim diken diken oluyor {a}.', 'Kim kime mars olacak, göreceğiz.']],
+    [/zar/i, ['Zar zar, hep zar {a} 😄', 'Zara söz geçmez {a}.']],
+    [/kazan|yen/i, ['Önce oyna, sonra konuşalım {a}.', 'Söz uçar, zar kalır {a}.']],
+    [/sağ ?ol|tşk|teşekkür|eyv/i, ['Rica ederim {a}.', 'Ne demek {a}.']]
+  ];
+  const fill = t => t.replace(/\{a\}/g, () => HITAP[rand(HITAP.length)]);
+  const pickOf = l => fill(l[rand(l.length)]);
+  let lastSay = 0, kasparT = null;
   function botSay(kind, chance) {
     if (!isBot()) return;
     if (chance != null && Math.random() > chance) return;
-    if (Date.now() - lastSay < 4000 && kind !== 'win' && kind !== 'winMars' && kind !== 'lose') return;
+    if (Date.now() - lastSay < 4000 && !['win', 'winMars', 'lose', 'kaspar'].includes(kind)) return;
     lastSay = Date.now();
     const list = BOT_SOZ[kind]; if (!list) return;
-    const text = list[rand(list.length)];
+    const text = pickOf(list);
     setTimeout(() => Chat.add({ key: 'bot', name: nameOf(BOT), text, t: Date.now() }), 500 + rand(700));
+  }
+  /** Bilgisayar her hazır mesaja ve yazılana cevap verir */
+  function botReply(text) {
+    if (!isBot()) return;
+    const k = text.trim().toLocaleLowerCase('tr');
+    let list = BOT_CEVAP[k];
+    if (!list) { const hit = BOT_SERBEST.find(([re]) => re.test(text)); list = hit ? hit[1] : ['Hı hı {a}.', 'Doğru diyorsun {a}.', 'Önce oyna, sonra konuşuruz 😄', 'Anladım {a}.', 'Hehe 😄', 'Öyle mi diyorsun {a}?']; }
+    lastSay = Date.now();
+    setTimeout(() => { Chat.add({ key: 'bot', name: nameOf(BOT), text: pickOf(list), t: Date.now() }); Sfx.chat(); }, 800 + rand(1000));
   }
   function botStep() {
     clearTimeout(botT);
@@ -480,7 +566,7 @@
   }
   function startBot(name, level) {
     G.mode = 'bot'; G.me = 0; G.code = null; G.botLevel = level || 'usta'; G.botPlan = null;
-    G.names = [name, 'Hasan Abi']; G.online = [true, true];
+    G.names = [name, 'Bilgisayar']; G.online = [true, true];
     G.openings = {}; G.openShown = {}; G.openResolved = {}; G.S = null;
     if (!enterGame()) return;
     G.S = Tavla.newState(1, [0, 0], matchLen());
@@ -586,6 +672,7 @@
     const S = G.S; if (S.phase !== 'over') { closeModal(); return; }
     G.botPlan = null;
     const ns = Tavla.newState(S.game + 1, S.matchOver ? [0, 0] : S.score, S.target || 5); ns.v = S.v + 1; ns.last = { type: 'new' };
+    if (!S.matchOver) { ns.phase = 'roll'; ns.turn = S.winner; ns.last.starter = S.winner; }
     closeModal(); commit(ns);
   }
 
@@ -654,6 +741,7 @@
           <h3>Oyun</h3>
           <label class="tog"><input type="checkbox" id="optAuto" ${G.auto ? 'checked' : ''}><span>Seçim yoksa taşı kendisi oynasın</span></label>
           <label class="tog"><input type="checkbox" id="optQ" ${Scene.quality === 'high' ? 'checked' : ''}><span>Yüksek görüntü kalitesi (telefon ısınırsa kapat)</span></label>
+          <label class="tog"><input type="checkbox" id="optShake" ${Shake.on ? 'checked' : ''}><span>Telefonu sallayınca zar at (sert sallama büyük zara biraz yatkın)</span></label>
           <h3>Ses</h3>
           <label class="tog"><input type="checkbox" id="optSnd" ${Sfx.on ? 'checked' : ''}><span>Ses efektleri</span></label>
           <label class="tog"><input type="checkbox" id="optMus" ${Music.on ? 'checked' : ''}><span>Müzik (Hicaz ud ve def)</span></label>
@@ -673,6 +761,7 @@
       $('#optMus', r).onchange = e => Music.setOn(e.target.checked);
       $('#optAmb', r).onchange = e => Sfx.setAmbient(e.target.checked);
       $('#optQ', r).onchange = e => Scene.setQuality(e.target.checked ? 'high' : 'low');
+      $('#optShake', r).onchange = async e => { if (e.target.checked && !(await askMotion())) { e.target.checked = false; toast('Hareket sensörüne izin verilmedi'); } Shake.on = e.target.checked; localStorage.setItem('rcp_shake', Shake.on ? '1' : '0'); refreshInteract(); };
       $$('#thB button', r).forEach(b => b.onclick = () => { Scene.setBoardTheme(b.dataset.k); diceKey = -1; render(); refreshInteract(); $$('#thB button', r).forEach(x => x.classList.toggle('on', x === b)); });
       $$('#thT button', r).forEach(b => b.onclick = () => { Scene.setTableTheme(b.dataset.k); $$('#thT button', r).forEach(x => x.classList.toggle('on', x === b)); });
       $('#mClose', r).onclick = closeModal; $('#mLeave', r).onclick = leave;
@@ -734,7 +823,7 @@
     Sfx.room(true); Music.room(Sfx.on);
     Scene.setPersp(persp());
     Scene.unfold();
-    $('#roomChip').textContent = G.mode === 'online' ? `Masa ${G.code}` : isBot() ? (G.botLevel === 'usta' ? '🤖 Usta' : '🤖 Kolay') : 'Aynı cihaz';
+    $('#roomChip').textContent = G.mode === 'online' ? `Masa ${G.code}` : isBot() ? ({ kolay: '🤖 Kolay', orta: '🤖 Orta', usta: '🤖 Usta' }[G.botLevel] || '🤖') : 'Aynı cihaz';
     $('#roomChip').onclick = G.mode === 'online' ? invite : null;
     $('#foldCaption').classList.remove('show'); document.body.classList.remove('folded');
     Cafe.mount({
@@ -747,7 +836,7 @@
       key: G.mode === 'online' ? Net.myId : 'local',
       send: text => {
         const m = { key: G.mode === 'online' ? Net.myId : 'local', name: G.mode === 'online' ? nameOf(G.me) : '', text, t: Date.now() };
-        if (G.mode === 'online') Net.chat(m); else Chat.add(m);
+        if (G.mode === 'online') Net.chat(m); else { Chat.add(m); botReply(text); }
       }
     });
     Voice.mount({
@@ -859,7 +948,7 @@
     $('#localBtn').onclick = () => { const n = getName(); if (n) startLocal(n, $('#guestIn').value.trim().slice(0, 16)); };
     $('#botBtn').onclick = () => { const n = getName(); if (n) { localStorage.setItem('rcp_botlv', $('#botLv').value); startBot(n, $('#botLv').value); } };
     $('#botLv').value = localStorage.getItem('rcp_botlv') || 'usta';
-    $('#rollBtn').onclick = () => doRoll();
+    $('#rollBtn').onclick = () => { if (Shake.on && !Shake.asked) { Shake.asked = true; askMotion(); } doRoll(); };
     $('#undoBtn').onclick = doUndo;
     $('#okBtn').onclick = () => { if (G.S && G.S.done && myTurn()) { clearTimeout(endT); endTurn(); } };
     $('#autoBtn').onclick = () => { G.autoRoll = !G.autoRoll; G.autoPlan = null; btoast(G.autoRoll ? 'Otomatik zar açık: zar atılır, taşlar toplanır' : 'Otomatik zar kapalı', 1600); refreshInteract(); if (G.autoRoll) autoRollStep(); };
@@ -889,6 +978,6 @@
       });
     }
   }
-  window.RCP = { G, toast, onTarget, render, afterState, refreshInteract };
+  window.RCP = { G, toast, onTarget, render, afterState, refreshInteract, rematchTest: () => rematch() };
   boot();
 })();

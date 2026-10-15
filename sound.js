@@ -154,6 +154,16 @@
       }
     },
     single() { Sfx.roll(1); },
+    /** Zarlar fincanın içinde çalkalanıyor: sallama gücü (0-1) arttıkça çarpma sayısı ve sertliği artar */
+    cupShake(k) {
+      if (!ok()) return; const t = now(), o = voice(.55 + .7 * k, .3), n = 2 + Math.round(k * 4);
+      for (let i = 0; i < n; i++) {
+        const tt = t + i * R(.012, .035), g = R(.6, 1) * (.4 + k);
+        strike(o, tt, BONE, { g: .3 * g, click: .2, clickF: 4500 });
+        strike(o, tt + .002, [[R(950, 1150), .07, .3], [R(2150, 2450), .05, .15], [R(3600, 3900), .03, .08]], { g: .3 * g, click: 0 });
+      }
+      nz(o, t, { dur: .07, g: .03 * k, f: 900, q: .8 });
+    },
     pick() { if (!ok()) return; strike(voice(.5, .15), now(), CLACK, { g: .18, click: .12, clickF: 5000 }); },
     /** Pul tahtaya ya da başka pulun üstüne iner */
     place(onStack) {
