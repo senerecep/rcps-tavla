@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#120818">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="RCP Tavla">
+  <title>RCP's-GAMES Tavla</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Monoton&family=Rubik:wght@400;500;700;800&family=Yeseva+One&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=7">
+</head>
+<body>
+
+  <div id="rotate" role="alert">
+    <div class="phone"></div>
+    <p>Telefonu yan çevir, masa yatayda kurulu.</p>
+  </div>
+
+  <!-- LOBİ -->
+  <section id="lobby" class="screen active">
+    <div class="entrance">
+      <h1 class="neon">RCP's-GAMES</h1>
+      <p class="subsign">Tavla salonu</p>
+      <p class="tagline">Çay ocağı açık, masalar hazır.</p>
+      <p class="version">Sürüm 7</p>
+    </div>
+    <div class="lobbyCard">
+      <div class="row nameRow">
+        <label class="field grow">
+          <span>Adın</span>
+          <input id="nameIn" maxlength="16" placeholder="Masada ne diye seslenelim?" autocomplete="nickname">
+        </label>
+        <label class="field">
+          <span>Maç</span>
+          <select id="matchLen" aria-label="Maç kaç sayıya"><option value="1">1 sayı</option><option value="3">3 sayı</option><option value="5">5 sayı</option><option value="7">7 sayı</option></select>
+        </label>
+      </div>
+      <div id="onlineBox">
+        <div class="row">
+          <button class="btn" id="createBtn">Masa aç</button>
+          <div class="joinWrap">
+            <input id="codeIn" inputmode="numeric" maxlength="4" placeholder="Masa no" aria-label="Masa numarası">
+            <button class="btn ghost" id="joinBtn">Otur</button>
+          </div>
+        </div>
+        <h2 class="listHead">Açık masalar</h2>
+        <div id="roomList" class="roomList"><p class="empty">Masalar yükleniyor…</p></div>
+      </div>
+      <p id="offlineNote" class="note" hidden>
+        Online masalar için <code>firebase-config.js</code> dosyasını doldur. O zamana kadar aynı cihazda karşılıklı oynayabilirsin.
+      </p>
+      <div class="localBox">
+        <input id="guestIn" maxlength="16" placeholder="Karşındakinin adı" aria-label="Karşındakinin adı">
+        <button class="btn ghost" id="localBtn">Aynı cihazda oyna</button>
+      </div>
+      <div class="localBox bot">
+        <select id="botLv" aria-label="Zorluk"><option value="kolay">Kolay</option><option value="usta">Usta</option></select>
+        <button class="btn" id="botBtn">🤖 Hasan Abi'ye karşı oyna</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- OYUN -->
+  <section id="game" class="screen">
+    <header id="hud">
+      <div class="brand">RCP's-GAMES</div>
+      <div class="pchip" id="pcMe"></div>
+      <div class="score" id="score">0 – 0</div>
+      <div class="pchip" id="pcOpp"></div>
+      <div class="spacer"></div>
+      <button class="chip" id="roomChip">Masa</button>
+      <button class="icon live-off" id="voiceBtn" aria-label="Sesli sohbet" hidden>🎙️</button>
+      <button class="icon" id="camBtn" aria-label="Kamera açısı">🎥</button>
+      <button class="icon" id="sndBtn" aria-label="Ses">🔊</button>
+      <button class="icon" id="fsBtn" aria-label="Tam ekran">⛶</button>
+      <button class="icon" id="chatBtn" aria-label="Sohbet">💬<span class="badge" hidden></span></button>
+      <button class="icon" id="menuBtn" aria-label="Ayarlar">☰</button>
+    </header>
+
+    <main id="room">
+      <div id="stage">
+        <button id="rollBtn" class="rollBtn" hidden><span class="rb-ico">🎲</span><span>Zar at</span></button>
+        <button id="waiterBtn" class="waiter">🙋 Garson!</button>
+        <div class="turnBar">
+          <button id="undoBtn" class="undoBtn" hidden><span>Geri al</span><i></i></button>
+          <button id="okBtn" class="okBtn" hidden>✓ Tamam</button>
+        </div>
+        <button id="autoBtn" class="autoBtn" hidden>🎲 Otomatik zar</button>
+        <div class="vignette" aria-hidden="true"></div>
+        <div id="openPanel" class="panel" hidden></div>
+        <div id="waitPanel" class="panel" hidden></div>
+        <div id="banner" class="banner" aria-live="polite"></div>
+        <div id="btoast" class="btoast"></div>
+        <div id="dcount" class="dcount" hidden></div>
+        <div id="coolChip" class="coolChip" hidden></div>
+        <div id="foldCaption" class="foldCaption"></div>
+        <div id="sipFX" aria-hidden="true"></div>
+        <div id="smokeFX" aria-hidden="true"></div>
+        <div id="frostFX" aria-hidden="true"></div>
+      </div>
+      <aside id="chat"></aside>
+    </main>
+  </section>
+
+  <div id="modal" hidden><div class="sheet" role="dialog" aria-modal="true"></div></div>
+  <div id="toast" role="status"></div>
+  <div id="confetti" aria-hidden="true"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="firebase-config.js?v=7"></script>
+  <script src="engine.js?v=7"></script>
+  <script src="sound.js?v=7"></script>
+  <script src="net.js?v=7"></script>
+  <script src="chat.js?v=7"></script>
+  <script src="fal.js?v=7"></script>
+  <script src="bot.js?v=7"></script>
+  <script src="music.js?v=7"></script>
+  <script src="voice.js?v=7"></script>
+  <script src="scene3d.js?v=7"></script>
+  <script src="cafe.js?v=7"></script>
+  <script src="app.js?v=7"></script>
+</body>
+</html>
